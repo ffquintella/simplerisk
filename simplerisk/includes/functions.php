@@ -1188,6 +1188,53 @@ function convert_color_code($color_name)
     }
 }
 
+/**
+ * Converts hex colors to rgb(a is optional)
+ * 
+ * Usage:
+ * $color = '#ffa226';
+ * $rgb = hex2rgba($color);
+ * $rgba = hex2rgba($color, 0.7);
+ */
+function hex2rgba($color, $opacity = false) {
+
+    $default = 'rgb(0,0,0)';
+
+    //Return default if no color provided
+    if(empty($color))
+        return $default;
+
+        //Sanitize $color if "#" is provided
+        if ($color[0] == '#' ) {
+            $color = substr( $color, 1 );
+        }
+
+        //Check if color has 6 or 3 characters and get values
+        if (strlen($color) == 6) {
+            $hex = array( $color[0] . $color[1], $color[2] . $color[3], $color[4] . $color[5] );
+        } elseif ( strlen( $color ) == 3 ) {
+            $hex = array( $color[0] . $color[0], $color[1] . $color[1], $color[2] . $color[2] );
+        } else {
+            return $default;
+        }
+
+        //Convert hexadec to rgb
+        $rgb =  array_map('hexdec', $hex);
+
+        //Check if opacity is set(rgba or rgb)
+        if($opacity){
+            if(abs($opacity) > 1) {
+                $opacity = 1.0;
+            }
+            $output = 'rgba('.implode(",",$rgb).','.$opacity.')';
+        } else {
+            $output = 'rgb('.implode(",",$rgb).')';
+        }
+
+        //Return rgb(a) color string
+        return $output;
+}
+
 /************************************
  * FUNCTION: UPDATE REVIEW SETTINGS *
  ************************************/
@@ -3252,7 +3299,7 @@ function update_password($user, $hash)
 /*************************
  * FUNCTION: SUBMIT RISK *
  *************************/
-function submit_risk($status, $subject, $reference_id, $regulation, $control_number, $location, $source,  $category, $team, $technology, $owner, $manager, $assessment, $notes, $project_id = 0, $submitted_by=0, $submission_date=false, $additional_stakeholders=[], $risk_catalog_mapping=[], $threat_catalog_mapping=[], $template_group_id="")
+function submit_risk($status, $subject, $reference_id, $regulation, $control_number, $location, $source,  $category, $team, $technology, $owner, $manager, $assessment, $notes, $project_id = 0, $submitted_by=0, $submission_date=false, $additional_stakeholders=[], $risk_catalog_mapping=[], $threat_catalog_mapping=[], $template_group_id="",$subject_order=true)
 {
     // If customization extra is enabled
     if(customization_extra())
@@ -3352,14 +3399,13 @@ function submit_risk($status, $subject, $reference_id, $regulation, $control_num
     }
 
     // If the encryption extra is enabled, updates order_by_subject
-    if (encryption_extra())
+    if (encryption_extra() && $subject_order == true)
     {
         // Load the extra
         require_once(realpath(__DIR__ . '/../extras/encryption/index.php'));
 
         create_subject_order(isset($_SESSION['encrypted_pass']) && $_SESSION['encrypted_pass'] ? base64_decode($_SESSION['encrypted_pass']) : fetch_key());
     }
-
 
     // If there's no session we get the name of the submitter from the database
     $username = (isset($_SESSION) && !empty($_SESSION['user']) ? $_SESSION['user'] : get_name_by_value("user", $submitted_by));
@@ -5130,11 +5176,9 @@ function update_risk($risk_id, $is_api = false)
     updateTagsOfType($id, 'risk', $tags);
 
     if($is_api === false) {
-        if (isset($_POST['assets_asset_groups'])) {
-            $assets_asset_groups = is_array($_POST['assets_asset_groups']) ? $_POST['assets_asset_groups'] : [];
-            // Update affected assets and asset groups
-            process_selected_assets_asset_groups_of_type($id, $assets_asset_groups, 'risk');
-        }
+        $assets_asset_groups = get_param("post", "assets_asset_groups", []);
+        // Update affected assets and asset groups
+        process_selected_assets_asset_groups_of_type($id, $assets_asset_groups, 'risk');
     } else {
         $affected_assets = get_param("POST", 'affected_assets');
 
@@ -5159,9 +5203,9 @@ function update_risk($risk_id, $is_api = false)
             $detail_updated[] = "Field name : `".$key. "` (`".$value["original"]."`=>`".$value["updated"]."`)";
         }
         $updated_string = implode(", ", $detail_updated);
-    } else $updated_string = "";
-    $message = "Risk details were updated for risk ID \"" . $risk_id . "\" by username \"" . $_SESSION['user'] . "\".\n".$updated_string;
-    write_log($risk_id, $_SESSION['uid'], $message);
+        $message = "Risk details were updated for risk ID \"" . $risk_id . "\" by username \"" . $_SESSION['user'] . "\".\n".$updated_string;
+        write_log($risk_id, $_SESSION['uid'], $message);
+    }
 
     // Close the database connection
     db_close($db);
@@ -5921,6 +5965,10 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
     // If this is the default, sort by risk
     if ($sort_order == 0)
     {
+        // Set default sort field
+        if(empty($sort_query)){
+            $sort_query = " ORDER BY a.calculated_risk DESC ";
+        }
         // If the team separation extra is not enabled
         if (!team_separation_extra())
         {
@@ -5939,8 +5987,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                 WHERE
                     b.status != \"Closed\"
                 GROUP BY b.id
-                ORDER BY
-                    a.calculated_risk DESC
+                {$sort_query}
             ");
         }
         else
@@ -5967,8 +6014,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                 WHERE
                     b.status != \"Closed\"  " . $separation_query . "
                 GROUP BY b.id
-                ORDER BY
-                    a.calculated_risk DESC
+                {$sort_query}
             ");
         }
 
@@ -5996,7 +6042,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     o.closure_date, j.name AS regulation, b.regulation regulation_id, b.assessment AS risk_assessment, b.notes AS additional_notes,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT location.name SEPARATOR '; ')
+                            GROUP_CONCAT(DISTINCT location.name SEPARATOR ',')
                         FROM
                             location, risk_to_location rtl
                         WHERE
@@ -6006,7 +6052,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     d.name AS category,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT team.name  SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT team.name  SEPARATOR ',')
                         FROM
                             team, risk_to_team rtt
                         WHERE
@@ -6014,7 +6060,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     ) AS team,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT u.name SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT u.name SEPARATOR ',')
                         FROM
                             user u, risk_to_additional_stakeholder rtas
                         WHERE
@@ -6022,7 +6068,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     ) AS additional_stakeholders,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT tech.name SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT tech.name SEPARATOR ',')
                         FROM
                             technology tech, risk_to_technology rttg
                         WHERE
@@ -6036,7 +6082,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     i.name AS submitted_by,
                     (
                         SELECT
-                            GROUP_CONCAT(t.tag ORDER BY t.tag ASC SEPARATOR '|')
+                            GROUP_CONCAT(t.tag ORDER BY t.tag ASC SEPARATOR ',')
                         FROM
                             tags t, tags_taggees tt 
                         WHERE
@@ -6044,17 +6090,19 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     ) AS risk_tags,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT rta.asset_id SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT a.name SEPARATOR ', ')
                         FROM
                             risks_to_assets rta
+                            INNER JOIN assets a ON a.id = rta.asset_id
                         WHERE
                             rta.risk_id=b.id
                     ) AS affected_assets,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT rtag.asset_group_id SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT ag.name SEPARATOR ', ')
                         FROM
                             risks_to_asset_groups rtag
+                            INNER JOIN `asset_groups` ag ON ag.id = rtag.asset_group_id
                         WHERE
                             rtag.risk_id=b.id
                     ) AS affected_asset_groups,
@@ -6066,7 +6114,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     t.name AS mitigation_owner,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT team.name SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT team.name SEPARATOR ',')
                         FROM
                             team, mitigation_to_team mtt 
                         WHERE
@@ -6078,7 +6126,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     p.submission_date AS mitigation_date,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT fc.short_name SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT fc.short_name SEPARATOR ',')
                         FROM
                             `mitigation_to_controls` mtc INNER JOIN framework_controls fc ON mtc.control_id=fc.id AND fc.deleted=0
                         WHERE
@@ -6135,7 +6183,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     o.closure_date, j.name AS regulation, b.regulation regulation_id, b.assessment AS risk_assessment, b.notes AS additional_notes,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT location.name SEPARATOR '; ')
+                            GROUP_CONCAT(DISTINCT location.name SEPARATOR ',')
                         FROM
                             location, risk_to_location rtl
                         WHERE
@@ -6145,7 +6193,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     d.name AS category,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT team.name  SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT team.name  SEPARATOR ',')
                         FROM
                             team, risk_to_team rtt
                         WHERE
@@ -6153,7 +6201,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     ) AS team,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT u.name SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT u.name SEPARATOR ',')
                         FROM
                             user u, risk_to_additional_stakeholder rtas
                         WHERE
@@ -6161,7 +6209,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     ) AS additional_stakeholders,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT tech.name SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT tech.name SEPARATOR ',')
                         FROM
                             technology tech, risk_to_technology rttg
                         WHERE
@@ -6175,7 +6223,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     i.name AS submitted_by,
                     (
                         SELECT
-                            GROUP_CONCAT(t.tag ORDER BY t.tag ASC SEPARATOR '|')
+                            GROUP_CONCAT(t.tag ORDER BY t.tag ASC SEPARATOR ',')
                         FROM
                             tags t, tags_taggees tt 
                         WHERE
@@ -6183,17 +6231,19 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     ) AS risk_tags,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT rta.asset_id SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT a.name SEPARATOR ', ')
                         FROM
                             risks_to_assets rta
+                            INNER JOIN assets a ON a.id = rta.asset_id
                         WHERE
                             rta.risk_id=b.id
                     ) AS affected_assets,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT rtag.asset_group_id SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT ag.name SEPARATOR ', ')
                         FROM
                             risks_to_asset_groups rtag
+                            INNER JOIN `asset_groups` ag ON ag.id = rtag.asset_group_id
                         WHERE
                             rtag.risk_id=b.id
                     ) AS affected_asset_groups,
@@ -6205,7 +6255,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     t.name AS mitigation_owner,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT team.name SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT team.name SEPARATOR ',')
                         FROM
                             team, mitigation_to_team mtt 
                         WHERE
@@ -6217,7 +6267,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     p.submission_date AS mitigation_date,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT fc.short_name SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT fc.short_name SEPARATOR ',')
                         FROM
                             `mitigation_to_controls` mtc INNER JOIN framework_controls fc ON mtc.control_id=fc.id AND fc.deleted=0
                         WHERE
@@ -6284,7 +6334,7 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     o.closure_date, j.name AS regulation, b.regulation regulation_id, b.assessment AS risk_assessment, b.notes AS additional_notes,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT location.name SEPARATOR '; ')
+                            GROUP_CONCAT(DISTINCT location.name SEPARATOR ',')
                         FROM
                             location, risk_to_location rtl
                         WHERE
@@ -6332,17 +6382,19 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     ) AS risk_tags,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT rta.asset_id SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT a.name SEPARATOR ', ')
                         FROM
                             risks_to_assets rta
+                            INNER JOIN assets a ON a.id = rta.asset_id
                         WHERE
                             rta.risk_id=b.id
                     ) AS affected_assets,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT rtag.asset_group_id SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT ag.name SEPARATOR ', ')
                         FROM
                             risks_to_asset_groups rtag
+                            INNER JOIN `asset_groups` ag ON ag.id = rtag.asset_group_id
                         WHERE
                             rtag.risk_id=b.id
                     ) AS affected_asset_groups,
@@ -6472,17 +6524,19 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     ) AS risk_tags,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT rta.asset_id SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT a.name SEPARATOR ', ')
                         FROM
                             risks_to_assets rta
+                            INNER JOIN assets a ON a.id = rta.asset_id
                         WHERE
                             rta.risk_id=b.id
                     ) AS affected_assets,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT rtag.asset_group_id SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT ag.name SEPARATOR ', ')
                         FROM
                             risks_to_asset_groups rtag
+                            INNER JOIN `asset_groups` ag ON ag.id = rtag.asset_group_id
                         WHERE
                             rtag.risk_id=b.id
                     ) AS affected_asset_groups,
@@ -6625,17 +6679,19 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     ) AS risk_tags,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT rta.asset_id SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT a.name SEPARATOR ', ')
                         FROM
                             risks_to_assets rta
+                            INNER JOIN assets a ON a.id = rta.asset_id
                         WHERE
                             rta.risk_id=b.id
                     ) AS affected_assets,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT rtag.asset_group_id SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT ag.name SEPARATOR ', ')
                         FROM
                             risks_to_asset_groups rtag
+                            INNER JOIN `asset_groups` ag ON ag.id = rtag.asset_group_id
                         WHERE
                             rtag.risk_id=b.id
                     ) AS affected_asset_groups,
@@ -6765,17 +6821,19 @@ function get_risks($sort_order=0, $order_field=false, $order_dir=false)
                     ) AS risk_tags,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT rta.asset_id SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT a.name SEPARATOR ', ')
                         FROM
                             risks_to_assets rta
+                            INNER JOIN assets a ON a.id = rta.asset_id
                         WHERE
                             rta.risk_id=b.id
                     ) AS affected_assets,
                     (
                         SELECT
-                            GROUP_CONCAT(DISTINCT rtag.asset_group_id SEPARATOR ', ')
+                            GROUP_CONCAT(DISTINCT ag.name SEPARATOR ', ')
                         FROM
                             risks_to_asset_groups rtag
+                            INNER JOIN `asset_groups` ag ON ag.id = rtag.asset_group_id
                         WHERE
                             rtag.risk_id=b.id
                     ) AS affected_asset_groups,
@@ -9993,6 +10051,7 @@ function update_mitigation($risk_id, $post)
         "mitigation_owner" => $mitigation_owner,
         "current_solution" => $current_solution,
         "security_requirements" => $security_requirements,
+        "security_recommendations" => $security_recommendations,
         "planning_date" => $planning_date,
         "mitigation_percent" => $mitigation_percent
     );
@@ -10102,9 +10161,9 @@ function update_mitigation($risk_id, $post)
             $detail_updated[] = "Field name : `".$key. "` (`".$value["original"]."`=>`".$value["updated"]."`)";
         }
         $updated_string = implode(", ", $detail_updated);
-    } else $updated_string = "";
-    $message = "Risk mitigation details were updated for risk ID \"" . $risk_id . "\" by username \"" . $_SESSION['user'] . "\".\n".$updated_string;
-    write_log($risk_id, $_SESSION['uid'], $message);
+        $message = "Risk mitigation details were updated for risk ID \"" . $risk_id . "\" by username \"" . $_SESSION['user'] . "\".\n".$updated_string;
+        write_log($risk_id, $_SESSION['uid'], $message);
+    }
 
     // Close the database connection
     db_close($db);
@@ -20771,6 +20830,13 @@ function is_valid_base_url($url)
         else return false;
     }
     else return false;
+}
+
+/**********************************
+ * FUNCTION: ADD QUOTES TO STRING *
+ **********************************/
+function add_quotes($str) {
+    return sprintf("\"%s\"", addcslashes($str, '",'));
 }
 
 ?>

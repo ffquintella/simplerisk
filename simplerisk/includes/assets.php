@@ -507,7 +507,7 @@ function display_asset_detail($id)
     global $escaper;
     global $lang;
     
-    $asset = get_asset_by_id($id)[0];
+    $asset = get_asset_by_id($id);
 
     // If the IP address is not valid
         if (!preg_match('/^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/', $asset['ip']))
@@ -846,7 +846,7 @@ function get_entered_assets($verified=null)
         GROUP BY
             a.id
         ORDER BY
-            " . (encryption_extra() ? "a.order_by_name" : "a.name") . "
+            a.id, " . (encryption_extra() ? "a.order_by_name" : "a.name") . "
     ;");
     $stmt->execute($params);
 
@@ -889,7 +889,7 @@ function get_asset_by_id($id)
     $stmt->execute();
 
     // Store the list in the assets array
-    $asset = $stmt->fetchAll();
+    $asset = $stmt->fetch(PDO::FETCH_ASSOC);
 
     // Close the database connection
     db_close($db);
@@ -1255,6 +1255,7 @@ function import_asset($ip, $name, $value, $location, $teams, $details, $tags, $v
 function get_asset_name( $asset_id )
 {
     $db = db_open();
+    $name = "";
 
     $stmt = $db->prepare("SELECT name from assets where id = :id");
     $stmt->bindParam(":id", $asset_id, PDO::PARAM_INT);
@@ -1833,7 +1834,7 @@ function update_asset_group($id, $name, $selected_assets) {
     $stmt->bindParam(":id", $id, PDO::PARAM_INT);
     $stmt->execute();
 
-    update_assets_of_asset_group($selected_assets, $id, $name);
+    if(!is_null($selected_assets)) update_assets_of_asset_group($selected_assets, $id, $name);
 
     db_close($db);
 }
